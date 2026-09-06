@@ -255,6 +255,8 @@
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
   }
   li.standing-row .col-num{
     text-align:center;
@@ -327,6 +329,8 @@
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .score{
@@ -492,6 +496,64 @@
     text-align:center;
   }
 
+  .fav-star{
+    background:none;
+    border:none;
+    color: var(--gold-dim);
+    font-size: 0.95rem;
+    line-height:1;
+    cursor:pointer;
+    flex:none;
+    padding: 2px;
+  }
+  .fav-star.active{ color: var(--gold); }
+  .fav-star:hover{ color: var(--gold); }
+  .fav-star:focus-visible{ outline: 2px solid var(--gold); outline-offset:1px; }
+
+  .fav-toggle{
+    background:none;
+    border: 1px solid var(--pitch-line);
+    color: var(--chalk-dim);
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:0.8rem;
+    padding: 8px 14px;
+    cursor:pointer;
+    white-space:nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .fav-toggle:hover{ color: var(--chalk); border-color: var(--gold); }
+  .fav-toggle.active{
+    color: var(--pitch-dark);
+    background: var(--gold);
+    border-color: var(--gold);
+  }
+  .fav-toggle.has-favs:not(.active){ border-color: var(--gold-dim); color: var(--gold); }
+
+  .last-updated{
+    font-size:0.72rem;
+    color: var(--gold-dim);
+    align-self:center;
+    margin-right: 10px;
+  }
+
+  @media (max-width: 700px){
+    nav.leagues{
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    nav.leagues::-webkit-scrollbar{ display:none; }
+    .wrap{ padding: 32px 16px 60px; }
+    header.top{ gap:16px; margin-bottom: 24px; }
+  }
+
+  @media (max-width: 480px){
+    .last-updated{ display:none; }
+    .searchbar-row{ flex-wrap: wrap; }
+    .searchbar-row input[type="text"]{ flex-basis: 100%; }
+  }
+
   @media (max-width: 480px){
     li.match{
       grid-template-columns: 40px 1fr auto 1fr 56px;
@@ -528,6 +590,7 @@
       <div class="searchbar-row">
         <input type="text" id="teamSearchInput" placeholder="Search for a team — e.g. Arsenal, Boca Juniors…">
         <button class="go" id="teamSearchBtn">Search</button>
+        <button class="fav-toggle" id="favoritesBtn">★ Favorites</button>
       </div>
       <div class="search-results" id="searchResults" hidden></div>
     </div>
@@ -539,7 +602,10 @@
           <button class="active" id="viewMatchesBtn">Matches</button>
           <button id="viewTableBtn">Table</button>
         </div>
-        <button id="refreshBtn">Refresh</button>
+        <div>
+          <span class="last-updated" id="lastUpdated"></span>
+          <button id="refreshBtn">Refresh</button>
+        </div>
       </div>
     </div>
 
@@ -611,6 +677,60 @@
   const standingsList = document.getElementById('standingsList');
   const viewMatchesBtn = document.getElementById('viewMatchesBtn');
   const viewTableBtn = document.getElementById('viewTableBtn');
+  const favoritesBtn = document.getElementById('favoritesBtn');
+  const lastUpdated = document.getElementById('lastUpdated');
+
+  const FAV_KEY = 'pitchside_favorites';
+
+  function getFavorites(){
+    try{
+      return JSON.parse(localStorage.getItem(FAV_KEY) || '{}');
+    }catch(err){
+      return {};
+    }
+  }
+
+  function saveFavorites(favs){
+    localStorage.setItem(FAV_KEY, JSON.stringify(favs));
+  }
+
+  function isFavorite(id){
+    if (!id) return false;
+    return !!getFavorites()[id];
+  }
+
+  function toggleFavorite(id, name){
+    if (!id) return;
+    const favs = getFavorites();
+    if (favs[id]) delete favs[id];
+    else favs[id] = name;
+    saveFavorites(favs);
+    if (favoritesBtn) {
+      favoritesBtn.classList.toggle('has-favs', Object.keys(favs).length > 0);
+    }
+  }
+
+  function favStar(id, name){
+    const btn = document.createElement('button');
+    btn.className = 'fav-star' + (isFavorite(id) ? ' active' : '');
+    btn.type = 'button';
+    btn.textContent = isFavorite(id) ? '★' : '☆';
+    btn.setAttribute('aria-label', isFavorite(id) ? `Remove ${name} from favorites` : `Add ${name} to favorites`);
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFavorite(id, name);
+      const nowFav = isFavorite(id);
+      btn.classList.toggle('active', nowFav);
+      btn.textContent = nowFav ? '★' : '☆';
+      if (state.mode === 'favorites') loadFavorites();
+    });
+    return btn;
+  }
+
+  function markUpdated(){
+    const now = new Date();
+    lastUpdated.textContent = 'Updated ' + now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
 
   function fmtISO(d){
     return d.toISOString().slice(0,10);
@@ -672,7 +792,67 @@
     return { label: ev.strStatus, cls: 'live', live: true };
   }
 
-  function renderMessage(text, withRetry){
+  function formatFavDate(dateStr){
+    if (!dateStr) return '';
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function enterFavoritesMode(){
+    state.mode = 'favorites';
+    state.team = null;
+    searchResults.hidden = true;
+    leagueControls.hidden = true;
+    dateBarEl.style.visibility = 'hidden';
+    teamModeHeader.hidden = false;
+    teamModeTitle.textContent = 'Your favorite teams';
+    matchList.hidden = false;
+    tableWrap.hidden = true;
+    favoritesBtn.classList.add('active');
+    loadFavorites();
+  }
+
+  async function loadFavorites(){
+    const favs = getFavorites();
+    const ids = Object.keys(favs);
+    if (ids.length === 0){
+      renderMessage("You haven't favorited any teams yet — tap the star next to a team to add them here.", false);
+      return;
+    }
+    renderMessage("Loading your teams' fixtures…", false);
+    try{
+      const results = await Promise.all(ids.map(id =>
+        fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsnext.php?id=${id}`)
+          .then(r => r.ok ? r.json() : { events: [] })
+          .catch(() => ({ events: [] }))
+      ));
+      let events = [];
+      results.forEach(r => { if (r && r.events) events = events.concat(r.events); });
+      const seen = new Set();
+      events = events.filter(ev => {
+        if (seen.has(ev.idEvent)) return false;
+        seen.add(ev.idEvent);
+        return true;
+      });
+      events.sort((a,b) => `${a.dateEvent||''} ${a.strTime||''}`.localeCompare(`${b.dateEvent||''} ${b.strTime||''}`));
+      if (events.length === 0){
+        renderMessage('No upcoming fixtures found for your favorite teams right now.', false);
+        return;
+      }
+      matchList.innerHTML = '';
+      let lastDate = null;
+      events.forEach(ev => {
+        if (ev.dateEvent !== lastDate){
+          lastDate = ev.dateEvent;
+          matchList.appendChild(sectionLabel(formatFavDate(ev.dateEvent)));
+        }
+        matchList.appendChild(buildMatchRow(ev));
+      });
+      markUpdated();
+    }catch(err){
+      renderMessage("Couldn't reach the scoreboard. Check your connection and try again.", true);
+    }
+  }
     matchList.innerHTML = '';
     const li = document.createElement('li');
     li.className = 'panel-msg';
@@ -682,7 +862,7 @@
     if (withRetry){
       const btn = document.createElement('button');
       btn.textContent = 'Try again';
-      btn.addEventListener('click', () => state.mode === 'team' ? loadTeamMatches() : loadMatches());
+      btn.addEventListener('click', () => refreshCurrent());
       li.appendChild(btn);
     }
     matchList.appendChild(li);
@@ -699,6 +879,7 @@
     const home = document.createElement('div');
     home.className = 'team home';
     home.innerHTML = `<span class="badge">${initials(ev.strHomeTeam)}</span><span class="team-name">${ev.strHomeTeam || ''}</span>`;
+    home.appendChild(favStar(ev.idHomeTeam, ev.strHomeTeam));
 
     const score = document.createElement('div');
     score.className = 'score';
@@ -709,6 +890,7 @@
     const away = document.createElement('div');
     away.className = 'team away';
     away.innerHTML = `<span class="badge">${initials(ev.strAwayTeam)}</span><span class="team-name">${ev.strAwayTeam || ''}</span>`;
+    away.appendChild(favStar(ev.idAwayTeam, ev.strAwayTeam));
 
     const status = document.createElement('div');
     const s = statusFor(ev);
@@ -771,6 +953,7 @@
       if (!res.ok) throw new Error('bad response');
       const data = await res.json();
       renderMatches(data.events);
+      markUpdated();
     }catch(err){
       renderMessage("Couldn't reach the scoreboard. Check your connection and try again.", true);
     }
@@ -833,6 +1016,7 @@
         <span class="col-num">${row.intGoalDifference ?? ''}</span>
         <span class="col-num pts">${row.intPoints ?? ''}</span>
       `;
+      li.querySelector('.col-team').appendChild(favStar(row.idTeam, row.strTeam));
       standingsList.appendChild(li);
     });
   }
@@ -850,6 +1034,7 @@
       if (!res.ok) throw new Error('bad response');
       const data = await res.json();
       renderStandings(data.table);
+      markUpdated();
     }catch(err){
       renderTableMessage("Couldn't reach the scoreboard. Check your connection and try again.", true);
     }
@@ -920,6 +1105,7 @@
     teamModeTitle.textContent = team.strTeam;
     matchList.hidden = false;
     tableWrap.hidden = true;
+    favoritesBtn.classList.remove('active');
     loadTeamMatches();
   }
 
@@ -929,6 +1115,7 @@
     teamSearchInput.value = '';
     teamModeHeader.hidden = true;
     leagueControls.hidden = false;
+    favoritesBtn.classList.remove('active');
     setView(state.view);
   }
 
@@ -944,6 +1131,7 @@
       const lastData = await lastRes.json();
       const nextData = await nextRes.json();
       renderTeamMatches(lastData.results, nextData.events);
+      markUpdated();
     }catch(err){
       renderMessage("Couldn't reach the scoreboard. Check your connection and try again.", true);
     }
@@ -977,15 +1165,36 @@
     renderDate();
     loadMatches();
   });
-  document.getElementById('refreshBtn').addEventListener('click', () => {
+  document.getElementById('refreshBtn').addEventListener('click', () => refreshCurrent());
+  favoritesBtn.addEventListener('click', () => {
+    if (state.mode === 'favorites') exitTeamMode();
+    else enterFavoritesMode();
+  });
+
+  function refreshCurrent(){
     if (state.mode === 'team') loadTeamMatches();
+    else if (state.mode === 'favorites') loadFavorites();
     else if (state.view === 'table') loadStandings();
     else loadMatches();
+  }
+
+  let autoRefreshTimer = null;
+  function startAutoRefresh(){
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    autoRefreshTimer = setInterval(() => {
+      if (!document.hidden) refreshCurrent();
+    }, 60000);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshCurrent();
   });
+
+  if (Object.keys(getFavorites()).length > 0) favoritesBtn.classList.add('has-favs');
 
   renderLeagueNav();
   renderDate();
   loadMatches();
+  startAutoRefresh();
 </script>
 
 </body>
